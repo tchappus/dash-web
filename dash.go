@@ -25,29 +25,26 @@ type GitResponse struct {
 		User struct {
 			ContributionsCollection struct {
 				ContributionCalendar struct {
-					TotalContributions int64 `json:"totalContributions"`
-					Weeks              []struct {
-						ContributionDays []struct {
-							ContributionCount int64  `json:"contributionCount"`
-							Date              string `json:"date"`
-						} `json:"contributionDays"`
-					} `json:"weeks"`
+					TotalContributions int64        `json:"totalContributions"`
+					Weeks              []CommitWeek `json:"weeks"`
 				} `json:"contributionCalendar"`
 			} `json:"contributionsCollection"`
 		} `json:"user"`
 	} `json:"data"`
 }
 
-type CommitDate struct {
-	Date    string
-	Commits int64
+type CommitWeek struct {
+	CommitDays []struct {
+		CommitCount int64  `json:"contributionCount"`
+		Date        string `json:"date"`
+	} `json:"contributionDays"`
 }
 
 type Page struct {
-	CommitDates []CommitDate
+	CommitWeekDays *[7][]int64
 }
 
-func getGitData() ([]CommitDate, error) {
+func getGitData() (*[7][]int64, error) {
 	query := `
 	query($userName:String!) {
 		user(login: $userName){
@@ -98,22 +95,18 @@ func getGitData() ([]CommitDate, error) {
 		fmt.Println(e)
 	}
 
-	commitDates := []CommitDate{}
+	weekDays := [7][]int64{}
 
 	for _, week := range result.Data.User.ContributionsCollection.ContributionCalendar.Weeks {
-		for _, day := range week.ContributionDays {
-			commitDates = append(commitDates, CommitDate{
-				Date:    day.Date,
-				Commits: day.ContributionCount,
-			})
+		for y, day := range week.CommitDays {
+			weekDays[y] = append(weekDays[y], day.CommitCount)
 		}
 	}
-
-	return commitDates, nil
+	return &weekDays, nil
 }
 
 func viewHandler(w http.ResponseWriter, r *http.Request) {
-	commitDates, err := getGitData()
+	weekDays, err := getGitData()
 
 	if err != nil {
 		fmt.Println(err)
@@ -122,13 +115,13 @@ func viewHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	p := &Page{
-		CommitDates: commitDates,
+		CommitWeekDays: weekDays,
 	}
 	t, _ := template.ParseFiles("template.html")
 	t.Execute(w, p)
 }
 
 func main() {
-	http.HandleFunc("/view/", viewHandler)
+	http.HandleFunc("/dash/", viewHandler)
 	log.Fatal(http.ListenAndServe(":8082", nil))
 }

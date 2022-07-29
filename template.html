@@ -1,7 +1,11 @@
 <div>
-    <ul>
-    {{range .CommitDates}}
-    <li>{{.Date}} - {{.Commits}}</li>
+<table>
+    {{range .CommitWeekDays}}
+    <tr>
+        {{range .}}
+        <td>{{.}}</td>
+        {{end}}
+    </tr>
     {{end}}
-    </ul>
+</table>
 </div>
