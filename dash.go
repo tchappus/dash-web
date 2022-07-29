@@ -44,7 +44,7 @@ type Page struct {
 	CommitWeekDays *[7][]int64
 }
 
-func getGitData() (*[7][]int64, error) {
+func getGitData() (*GitResponse, error) {
 	query := `
 	query($userName:String!) {
 		user(login: $userName){
@@ -93,20 +93,46 @@ func getGitData() (*[7][]int64, error) {
 	var result GitResponse
 	if err := json.Unmarshal(body, &result); err != nil {
 		fmt.Println(e)
+		return nil, err
 	}
 
-	weekDays := [7][]int64{}
+	return &result, nil
+}
 
-	for _, week := range result.Data.User.ContributionsCollection.ContributionCalendar.Weeks {
+func generateWeekDays(res *GitResponse) (*[7][]int64, int64) {
+	weekDays := [7][]int64{}
+	maxCommits := int64(0)
+	for _, week := range res.Data.User.ContributionsCollection.ContributionCalendar.Weeks {
 		for y, day := range week.CommitDays {
+
+			if day.CommitCount > maxCommits {
+				maxCommits = day.CommitCount
+			}
+
 			weekDays[y] = append(weekDays[y], day.CommitCount)
 		}
 	}
-	return &weekDays, nil
+	return &weekDays, int64(maxCommits)
 }
 
 func viewHandler(w http.ResponseWriter, r *http.Request) {
-	weekDays, err := getGitData()
+	res, err := getGitData()
+
+	if err != nil {
+		fmt.Println(err)
+		w.WriteHeader(http.StatusInternalServerError)
+		w.Write([]byte(err.Error()))
+		return
+	}
+
+	generateWebpage(res, &w)
+}
+
+func testHandler(w http.ResponseWriter, r *http.Request) {
+
+	file, _ := os.ReadFile("test.json")
+	var res *GitResponse
+	err := json.Unmarshal(file, &res)
 
 	if err != nil {
 		fmt.Println(err)
@@ -114,14 +140,53 @@ func viewHandler(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte(err.Error()))
 	}
 
+	generateWebpage(res, &w)
+}
+
+func generateWebpage(res *GitResponse, w *http.ResponseWriter) {
+	weekDays, maxCommits := generateWeekDays(res)
+
+	ratio := 100 / maxCommits
+
 	p := &Page{
 		CommitWeekDays: weekDays,
 	}
-	t, _ := template.ParseFiles("template.html")
-	t.Execute(w, p)
+	t, err := template.New("template.html").Funcs(template.FuncMap{
+		"commitOpacity": func(commits int64) int64 {
+			return ratio * commits
+		},
+	}).ParseFiles("template.html")
+
+	if err != nil {
+		fmt.Printf(err.Error())
+		return
+	}
+	err = t.Execute(*w, p)
+
+	if err != nil {
+		fmt.Printf(err.Error())
+		return
+	}
 }
 
 func main() {
 	http.HandleFunc("/dash/", viewHandler)
+	http.HandleFunc("/test/", testHandler)
 	log.Fatal(http.ListenAndServe(":8082", nil))
 }
+
+// func main() {
+// 	vars := &QueryVariables{
+// 		Username: "foo",
+// 	}
+
+// 	req := GitRequest{
+// 		Variables: vars,
+// 		Query:     "",
+// 	}
+
+// 	req.Variables.Username = "bar"
+
+// 	fmt.Println(vars.Username)
+
+// }

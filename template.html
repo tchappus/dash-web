@@ -1,9 +1,33 @@
+<style>
+    .square {
+      height: 12px;
+      width: 12px;
+    }
+
+    .filled {
+        background-color: #3DD359;
+    }
+
+    .blank {
+        background-color: #161B22;
+    }
+
+    html {
+        background-color: #0D1117;
+    }
+    
+</style>
+
 <div>
 <table>
     {{range .CommitWeekDays}}
     <tr>
         {{range .}}
-        <td>{{.}}</td>
+            {{if (gt . 0)}}
+                <td class="filled square" style="opacity: {{ commitOpacity . }}%"></td>
+            {{else}}
+                <td class="blank square"></td>
+            {{end}}
         {{end}}
     </tr>
     {{end}}
