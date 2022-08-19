@@ -42,6 +42,24 @@ type CommitWeek struct {
 
 type Page struct {
 	CommitWeekDays *[7][]int64
+	CommitRatio    float64
+	Temp           float32
+}
+
+type WeatherResponse struct {
+	Data struct {
+		Timelines []struct {
+			Timestep  string `json:"timestep"`
+			StartTime string `json:"startTime"`
+			EndTime   string `json:"endTime"`
+			Intervals []struct {
+				StartTime string `json:"startTime"`
+				Values    struct {
+					Temperature float32 `json:"temperature"`
+				} `json:"values"`
+			} `json:"intervals"`
+		} `json:"timelines"`
+	} `json:"data"`
 }
 
 func getGitData() (*GitResponse, error) {
@@ -99,10 +117,57 @@ func getGitData() (*GitResponse, error) {
 	return &result, nil
 }
 
+func getWeatherData() (*WeatherResponse, error) {
+	request := struct {
+		Location  [2]float64 `json:"location"`
+		Fields    [1]string  `json:"fields"`
+		Units     string     `json:"units"`
+		StartTime string     `json:"startTime"`
+		EndTime   string     `json:"endTime"`
+		Timezone  string     `json:"timezone"`
+	}{
+		Location:  [...]float64{45.5245773, -73.596708},
+		Fields:    [...]string{"temperature"},
+		Units:     "metric",
+		StartTime: "now",
+		EndTime:   "nowPlus6h",
+		Timezone:  "America/Montreal",
+	}
+
+	payloadBuf := new(bytes.Buffer)
+	json.NewEncoder(payloadBuf).Encode(request)
+
+	req, _ := http.NewRequest("POST", fmt.Sprintf("https://api.tomorrow.io/v4/timelines?apikey=%s", os.Getenv("TOMORROW_IO_TOKEN")), payloadBuf)
+
+	client := &http.Client{}
+	res, e := client.Do(req)
+
+	if e != nil {
+		fmt.Println("error while doing tomorrow.io rest call", e)
+		return nil, e
+	}
+
+	defer res.Body.Close()
+
+	fmt.Println("Response from tomorrow.io:", res.Status)
+
+	body, _ := ioutil.ReadAll(res.Body)
+
+	var result WeatherResponse
+	if err := json.Unmarshal(body, &result); err != nil {
+		fmt.Println(e)
+		return nil, err
+	}
+
+	return &result, nil
+}
+
 func generateWeekDays(res *GitResponse) (*[7][]int64, int64) {
 	weekDays := [7][]int64{}
 	maxCommits := int64(0)
-	for _, week := range res.Data.User.ContributionsCollection.ContributionCalendar.Weeks {
+	weeks := res.Data.User.ContributionsCollection.ContributionCalendar.Weeks
+	lastFiftyTwoWeeks := weeks[len(weeks)-52:]
+	for _, week := range lastFiftyTwoWeeks {
 		for y, day := range week.CommitDays {
 
 			if day.CommitCount > maxCommits {
@@ -116,7 +181,7 @@ func generateWeekDays(res *GitResponse) (*[7][]int64, int64) {
 }
 
 func viewHandler(w http.ResponseWriter, r *http.Request) {
-	res, err := getGitData()
+	gitRes, err := getGitData()
 
 	if err != nil {
 		fmt.Println(err)
@@ -125,37 +190,34 @@ func viewHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	generateWebpage(res, &w)
-}
+	weekDays, maxCommits := generateWeekDays(gitRes)
+	commitRatio := 100 / maxCommits
 
-func testHandler(w http.ResponseWriter, r *http.Request) {
-
-	file, _ := os.ReadFile("test.json")
-	var res *GitResponse
-	err := json.Unmarshal(file, &res)
+	weatherRes, err := getWeatherData()
 
 	if err != nil {
 		fmt.Println(err)
 		w.WriteHeader(http.StatusInternalServerError)
 		w.Write([]byte(err.Error()))
+		return
 	}
-
-	generateWebpage(res, &w)
-}
-
-func generateWebpage(res *GitResponse, w *http.ResponseWriter) {
-	weekDays, maxCommits := generateWeekDays(res)
-
-	ratio := 100 / maxCommits
 
 	p := &Page{
 		CommitWeekDays: weekDays,
+		CommitRatio:    float64(commitRatio),
+		Temp:           weatherRes.Data.Timelines[0].Intervals[0].Values.Temperature,
 	}
-	t, err := template.New("template.html").Funcs(template.FuncMap{
+
+	generateWebpage(p, &w)
+}
+
+func generateWebpage(p *Page, w *http.ResponseWriter) {
+
+	t, err := template.New("template.gohtml").Funcs(template.FuncMap{
 		"commitOpacity": func(commits int64) int64 {
-			return ratio * commits
+			return int64(p.CommitRatio) * commits
 		},
-	}).ParseFiles("template.html")
+	}).ParseFiles("template.gohtml")
 
 	if err != nil {
 		fmt.Printf(err.Error())
@@ -171,22 +233,5 @@ func generateWebpage(res *GitResponse, w *http.ResponseWriter) {
 
 func main() {
 	http.HandleFunc("/dash/", viewHandler)
-	http.HandleFunc("/test/", testHandler)
 	log.Fatal(http.ListenAndServe(":8082", nil))
 }
-
-// func main() {
-// 	vars := &QueryVariables{
-// 		Username: "foo",
-// 	}
-
-// 	req := GitRequest{
-// 		Variables: vars,
-// 		Query:     "",
-// 	}
-
-// 	req.Variables.Username = "bar"
-
-// 	fmt.Println(vars.Username)
-
-// }
